@@ -5,11 +5,10 @@
 
 #include "routinesGPU.h"
 
-__global__ 
-void kernelBlur(uint8_t *im, float *NR, int height, int width){
+__global__ void kernelBlur(uint8_t *im, float *NR, int height, int width){
 	int i = (blockIdx.x*blockDim.x + threadIdx.x) + 2;
 	int j = (blockIdx.y*blockDim.y + threadIdx.y) + 2;
-	if(i < width-2 && j < height-2){
+	if(i < height-2 && j < width-2){
 		NR[i*width+j] =
 				 (2.0*im[(i-2)*width+(j-2)] +  4.0*im[(i-2)*width+(j-1)] +  5.0*im[(i-2)*width+(j)] +  4.0*im[(i-2)*width+(j+1)] + 2.0*im[(i-2)*width+(j+2)]
 				+ 4.0*im[(i-1)*width+(j-2)] +  9.0*im[(i-1)*width+(j-1)] + 12.0*im[(i-1)*width+(j)] +  9.0*im[(i-1)*width+(j+1)] + 4.0*im[(i-1)*width+(j+2)]
@@ -20,12 +19,11 @@ void kernelBlur(uint8_t *im, float *NR, int height, int width){
 	}
 }
 
-__global__
-void kernelGradient(float *NR, float *Gx, float *Gy, float *phi, float *G, int height, int width){
+__global__ void kernelGradient(float *NR, float *Gx, float *Gy, float *phi, float *G, int height, int width){
 	float PI = 3.141593;
 	int i = (blockIdx.x*blockDim.x + threadIdx.x) + 2;
 	int j = (blockIdx.y*blockDim.y + threadIdx.y) + 2;
-	if(i < width-2 && j < height-2){
+	if(i < height-2 && j < width-2){
 		Gx[i*width+j] = 
 				 (1.0*NR[(i-2)*width+(j-2)] +  2.0*NR[(i-2)*width+(j-1)] +  (-2.0)*NR[(i-2)*width+(j+1)] + (-1.0)*NR[(i-2)*width+(j+2)]
 				+ 4.0*NR[(i-1)*width+(j-2)] +  8.0*NR[(i-1)*width+(j-1)] +  (-8.0)*NR[(i-1)*width+(j+1)] + (-4.0)*NR[(i-1)*width+(j+2)]
@@ -54,11 +52,10 @@ void kernelGradient(float *NR, float *Gx, float *Gy, float *phi, float *G, int h
 	}
 }
 
-__global__
-void kernelEdge(float *G, uint8_t *pedge, float *phi, int height, int width){
+__global__ void kernelEdge(float *G, uint8_t *pedge, float *phi, int height, int width){
 	int i = (blockIdx.x*blockDim.x + threadIdx.x) + 3;
 	int j = (blockIdx.y*blockDim.y + threadIdx.y) + 3;
-	if(i < width-3 && j < height-3){
+	if(i < height-3 && j < width-3){
 		pedge[i*width+j] = 0;
 			if(phi[i*width+j] == 0){
 				if(G[i*width+j]>G[i*width+j+1] && G[i*width+j]>G[i*width+j-1]) //edge is in N-S
@@ -79,14 +76,13 @@ void kernelEdge(float *G, uint8_t *pedge, float *phi, int height, int width){
 	}
 }
 
-__global__
-void kernelThresholding(uint8_t *pedge, float *G,uint8_t *image_out, float level, int height, int width){
+__global__ void kernelThresholding(uint8_t *pedge, float *G,uint8_t *image_out, float level, int height, int width){
 	float lowthres = level/2;
 	float hithres = 2*(level);
 	int ii, jj;
 	int i = (blockIdx.x*blockDim.x + threadIdx.x) + 3;
 	int j = (blockIdx.y*blockDim.y + threadIdx.y) + 3;
-	if(i < width-3 && j < height-3){
+	if(i < height-3 && j < width-3){
 		image_out[i*width+j] = 0;
 			if(G[i*width+j]>hithres && pedge[i*width+j])
 				image_out[i*width+j] = 255;
@@ -103,7 +99,7 @@ void canny(uint8_t *im, uint8_t *image_out,
 	float *NR, float *G, float *phi, float *Gx, float *Gy, uint8_t *pedge,
 	float level,
 	int height, int width)
-{
+{	
 	float *d_NR, *d_G, *d_phi, *d_Gx, *d_Gy;
 	uint8_t *d_im, *d_pedge, *d_image_out;
 	//Carga de memoria al kernel blur
@@ -111,14 +107,13 @@ void canny(uint8_t *im, uint8_t *image_out,
 	cudaMalloc((void**)&d_NR, height*width*sizeof(float));
 	cudaMemcpy(d_im, im, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
 	//Llamada al kernel blur
-	dim3 dimBlockB(16,16); // numero de hilos por bloque
-	dim3 dimGridB(ceil(width/16.0), ceil(height/16.0)); // numero de bloques
+	dim3 dimBlockB(32,32,1); // numero de hilos por bloque
+	dim3 dimGridB(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
 	kernelBlur<<<dimGridB, dimBlockB>>>(d_im, d_NR, height, width);
 	//Es posible ahorrase esta copia de memoria si dejamos d_NR  y no lo liberamos
 	cudaMemcpy(NR, d_NR, height*width*sizeof(float), cudaMemcpyDeviceToHost);
 	cudaFree(d_im); cudaFree(d_NR);
 	//Fin kernel blur
-
 	//Carga de memoria al kernel gradient
 	cudaMalloc((void**)&d_NR, height*width*sizeof(float));
 	cudaMalloc((void**)&d_Gx, height*width*sizeof(float));
@@ -127,14 +122,13 @@ void canny(uint8_t *im, uint8_t *image_out,
 	cudaMalloc((void**)&d_G, height*width*sizeof(float));
 	cudaMemcpy(d_NR, NR, height*width*sizeof(float), cudaMemcpyHostToDevice);
 	//Llamada al kernel gradient
-	dim3 dimBlockG(16,16); // numero de hilos por bloque
-	dim3 dimGridG(ceil(width/16.0), ceil(height/16.0)); // numero de bloques
+	dim3 dimBlockG(32,32,1); // numero de hilos por bloque
+	dim3 dimGridG(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
 	kernelGradient<<<dimGridG, dimBlockG>>>(d_NR, d_Gx, d_Gy, d_phi, d_G, height, width);
 	cudaMemcpy(G, d_G, height*width*sizeof(float), cudaMemcpyDeviceToHost);
 	cudaMemcpy(phi, d_phi, height*width*sizeof(float), cudaMemcpyDeviceToHost);
 	cudaFree(d_G); cudaFree(d_phi); cudaFree(d_Gx); cudaFree(d_Gy); cudaFree(d_NR);
 	//Fin kernel gradient
-
 	//Carga de memoria al kernel edge
 	cudaMalloc((void**)&d_G, height*width*sizeof(float));
 	cudaMalloc((void**)&d_phi, height*width*sizeof(float));
@@ -142,13 +136,12 @@ void canny(uint8_t *im, uint8_t *image_out,
 	cudaMemcpy(d_G, G, height*width*sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_phi, phi, height*width*sizeof(float), cudaMemcpyHostToDevice);
 	//Llamada al kernel edge
-	dim3 dimBlockE(16,16); // numero de hilos por bloque
-	dim3 dimGridE(ceil(width/16.0), ceil(height/16.0)); // numero de bloques
+	dim3 dimBlockE(32,32,1); // numero de hilos por bloque
+	dim3 dimGridE( ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
 	kernelEdge<<<dimGridE, dimBlockE>>>(d_G, d_pedge, d_phi, height, width);
 	cudaMemcpy(pedge, d_pedge, height*width*sizeof(uint8_t), cudaMemcpyDeviceToHost);
 	cudaFree(d_G); cudaFree(d_phi); cudaFree(d_pedge);
 	//Fin kernel edge
-
 	//Carga de memoria al kernel Thresholding
 	cudaMalloc((void**)&d_pedge, height*width*sizeof(uint8_t));
 	cudaMalloc((void**)&d_G, height*width*sizeof(float));
@@ -156,42 +149,66 @@ void canny(uint8_t *im, uint8_t *image_out,
 	cudaMemcpy(d_pedge, pedge, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_G, G, height*width*sizeof(float), cudaMemcpyHostToDevice);
 	//Llamada al kernel Thresholding
-	dim3 dimBlockT(16,16); // numero de hilos por bloque
-	dim3 dimGridT(ceil(width/16.0), ceil(height/16.0)); // numero de bloques
+	dim3 dimBlockT(32,32,1); // numero de hilos por bloque
+	dim3 dimGridT(ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
 	kernelThresholding<<<dimGridT, dimBlockT>>>(d_pedge, d_G, d_image_out, level, height, width);
 	cudaMemcpy(image_out, d_image_out, height*width*sizeof(uint8_t), cudaMemcpyDeviceToHost);
 	cudaFree(d_pedge); cudaFree(d_G); cudaFree(d_image_out);
+	//Fin kernel Thresholding
 }
 
-//getlines
+__global__ void kernelAccInit(uint32_t *accumulators, int accu_width, int accu_height)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	int j = blockIdx.y*blockDim.y + threadIdx.y;
+	if (i<accu_height && j<accu_width)
+		accumulators[i*accu_width+j] = 0;
+}
+__global__ void kernelHoughTransform(uint8_t *im, int width, int height, uint32_t *accumulators, float hough_h, float *sin_table, float *cos_table, float center_x, float center_y){
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	int j = blockIdx.y*blockDim.y + threadIdx.y;
+	int theta;
+	if(i < height && j < width)
+		if( im[ (i*width) + j] > 250 ) // Pixel is edge  
+				{  
+					for(theta=0;theta<180;theta++)  
+					{  
+						float rho = ( ((float)j - center_x) * cos_table[theta]) + (((float)i - center_y) * sin_table[theta]);
+						accumulators[ (int)((round(rho + hough_h) * 180.0)) + theta]++;//proteger esto para que no se joda
+
+					} 
+				} 	
+
+}
 
 void houghtransform(uint8_t *im, int width, int height, uint32_t *accumulators, int accu_width, int accu_height, 
 	float *sin_table, float *cos_table)
 {
-	int i, j, theta;
+	uint8_t *d_im;
+	uint32_t *d_accumulators;
 
-	float hough_h = ((sqrt(2.0) * (float)(height>width?height:width)) / 2.0);
+	float *d_sin_table, *d_cos_table, hough_h, center_x = width/2.0, center_y = height/2.0;
+	hough_h = ((sqrt(2.0) * (float)(height>width?height:width)) / 2.0);
+	cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
+	dim3 dimBlockA(32,32,1); // numero de hilos por bloque
+	dim3 dimGridA(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
+	kernelAccInit<<<dimGridA, dimBlockA>>>(d_accumulators, accu_width, accu_height);
+	cudaMemcpy(accumulators, d_accumulators, accu_height*accu_width*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+	cudaFree(d_accumulators);
 
-	for(i=0; i<accu_width*accu_height; i++)
-		accumulators[i]=0;	
-
-	float center_x = width/2.0; 
-	float center_y = height/2.0;
-	for(i=0;i<height;i++)  
-	{  
-		for(j=0;j<width;j++)  
-		{  
-			if( im[ (i*width) + j] > 250 ) // Pixel is edge  
-			{  
-				for(theta=0;theta<180;theta++)  
-				{  
-					float rho = ( ((float)j - center_x) * cos_table[theta]) + (((float)i - center_y) * sin_table[theta]);
-					accumulators[ (int)((round(rho + hough_h) * 180.0)) + theta]++;//proteger esto para que no se joda
-
-				} 
-			} 
-		} 
-	}
+	cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
+	cudaMalloc((void**)&d_im, height*width*sizeof(uint8_t));
+	cudaMalloc((void**)&d_sin_table, accu_height*sizeof(float));
+	cudaMalloc((void**)&d_cos_table, accu_width*sizeof(float));
+	cudaMemcpy(d_sin_table, sin_table, accu_height*sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_cos_table, cos_table, accu_width*sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_im, im, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_accumulators, accumulators, accu_height*accu_width*sizeof(uint32_t), cudaMemcpyHostToDevice);
+	dim3 dimBlockH(32,32,1); // numero de hilos por bloque
+	dim3 dimGridH(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
+	kernelHoughTransform<<<dimGridH, dimBlockH>>>(d_im, width, height, d_accumulators, hough_h, d_sin_table, d_cos_table, center_x, center_y);
+	cudaMemcpy(accumulators, d_accumulators, accu_height*accu_width*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+	cudaFree(d_im); cudaFree(d_accumulators); cudaFree(d_sin_table); cudaFree(d_cos_table);
 }
 
 void getlines(int threshold, uint32_t *accumulators, int accu_width, int accu_height, int width, int height, 
@@ -267,7 +284,7 @@ void line_asist_GPU(uint8_t *im, int height, int width,
 	uint8_t *imEdge, float *NR, float *G, float *phi, float *Gx, float *Gy, uint8_t *pedge,
 	float *sin_table, float *cos_table, 
 	uint32_t *accum, int accu_height, int accu_width,
-	int *x1, int *x2, int *y1, int *y2, int *nlines)
+	int *x1, int *y1, int *x2, int *y2, int *nlines)
 {
 	int threshold;
 	canny(im, imEdge, NR, G, phi, Gx, Gy, pedge, 1000.0f, height, width);
