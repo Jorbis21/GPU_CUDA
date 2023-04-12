@@ -3,6 +3,7 @@
 #include <math.h>
 #include <cuda.h>
 
+
 #include "routinesGPU.h"
 
 __global__ void kernelBlur(uint8_t *im, float *NR, int height, int width){
@@ -174,8 +175,7 @@ __global__ void kernelHoughTransform(uint8_t *im, int width, int height, uint32_
 					for(theta=0;theta<180;theta++)  
 					{  
 						float rho = ( ((float)j - center_x) * cos_table[theta]) + (((float)i - center_y) * sin_table[theta]);
-						accumulators[ (int)((round(rho + hough_h) * 180.0)) + theta]++;//proteger esto para que no se joda
-
+						atomicAdd(&accumulators[ (int)((round(rho + hough_h) * 180.0)) + theta], 1);
 					} 
 				} 	
 
@@ -198,10 +198,10 @@ void houghtransform(uint8_t *im, int width, int height, uint32_t *accumulators, 
 
 	cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
 	cudaMalloc((void**)&d_im, height*width*sizeof(uint8_t));
-	cudaMalloc((void**)&d_sin_table, accu_height*sizeof(float));
-	cudaMalloc((void**)&d_cos_table, accu_width*sizeof(float));
-	cudaMemcpy(d_sin_table, sin_table, accu_height*sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_cos_table, cos_table, accu_width*sizeof(float), cudaMemcpyHostToDevice);
+	cudaMalloc((void**)&d_sin_table, 180*sizeof(float));
+	cudaMalloc((void**)&d_cos_table, 180*sizeof(float));
+	cudaMemcpy(d_sin_table, sin_table, 180*sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_cos_table, cos_table, 180*sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_im, im, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_accumulators, accumulators, accu_height*accu_width*sizeof(uint32_t), cudaMemcpyHostToDevice);
 	dim3 dimBlockH(32,32,1); // numero de hilos por bloque
@@ -211,19 +211,15 @@ void houghtransform(uint8_t *im, int width, int height, uint32_t *accumulators, 
 	cudaFree(d_im); cudaFree(d_accumulators); cudaFree(d_sin_table); cudaFree(d_cos_table);
 }
 
-void getlines(int threshold, uint32_t *accumulators, int accu_width, int accu_height, int width, int height, 
+__global__ void kernelGetLines(int threshold, uint32_t *accumulators, int accu_width, int accu_height, int width, int height, 
 	float *sin_table, float *cos_table,
-	int *x1_lines, int *y1_lines, int *x2_lines, int *y2_lines, int *lines)
-{
-	int rho, theta, ii, jj;
+	int *x1_lines, int *y1_lines, int *x2_lines, int *y2_lines, int *lines){
+	int rho = blockIdx.x*blockDim.x + threadIdx.x;
+	int theta = blockIdx.y*blockDim.y + threadIdx.y;
+	int ii, jj;
 	uint32_t max;
-
-	for(rho=0;rho<accu_height;rho++)
-	{
-		for(theta=0;theta<accu_width;theta++)  
-		{  
-
-			if(accumulators[(rho*accu_width) + theta] >= threshold)  
+	if(rho < accu_height && theta < accu_width){
+		if(accumulators[(rho*accu_width) + theta] >= threshold)  
 			{  
 				//Is this point a local maxima (9x9)  
 				max = accumulators[(rho*accu_width) + theta]; 
@@ -275,8 +271,37 @@ void getlines(int threshold, uint32_t *accumulators, int accu_width, int accu_he
 					(*lines)++;
 				}
 			}
-		}
 	}
+}
+
+void getlines(int threshold, uint32_t *accumulators, int accu_width, int accu_height, int width, int height, 
+	float *sin_table, float *cos_table,
+	int *x1_lines, int *y1_lines, int *x2_lines, int *y2_lines, int *lines)
+{
+	uint32_t *d_accumulators;
+	float *d_sin_table, *d_cos_table;
+	int *d_x1_lines, *d_y1_lines, *d_x2_lines, *d_y2_lines, *d_lines;
+	cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
+	cudaMalloc((void**)&d_sin_table, 180*sizeof(float));
+	cudaMalloc((void**)&d_cos_table, 180*sizeof(float));
+	cudaMalloc((void**)&d_x1_lines, 10*sizeof(int));
+	cudaMalloc((void**)&d_y1_lines, 10*sizeof(int));
+	cudaMalloc((void**)&d_x2_lines, 10*sizeof(int));
+	cudaMalloc((void**)&d_y2_lines, 10*sizeof(int));
+	cudaMalloc((void**)&d_lines, sizeof(int));
+	cudaMemcpy(d_accumulators, accumulators, accu_height*accu_width*sizeof(uint32_t), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_sin_table, sin_table, 180*sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_cos_table, cos_table, 180*sizeof(float), cudaMemcpyHostToDevice);
+	dim3 dimBlockL(32,32,1); // numero de hilos por bloque
+	dim3 dimGridL(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
+	kernelGetLines<<<dimGridL, dimBlockL>>>(threshold, d_accumulators, accu_width, accu_height, width, height, d_sin_table, d_cos_table, d_x1_lines, d_y1_lines, d_x2_lines, d_y2_lines, d_lines);
+	cudaMemcpy(x1_lines, d_x1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(y1_lines, d_y1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(x2_lines, d_x2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(y2_lines, d_y2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(lines, d_lines, sizeof(int), cudaMemcpyDeviceToHost);
+	cudaFree(d_accumulators); cudaFree(d_sin_table); cudaFree(d_cos_table);
+	cudaFree(d_x1_lines); cudaFree(d_y1_lines); cudaFree(d_x2_lines); cudaFree(d_y2_lines); cudaFree(d_lines);
 }
 
 //hacer uso de la memoria compartida si es necesario para reusar los datos
