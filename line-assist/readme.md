@@ -7,3 +7,6 @@ Revisar el canny que claramente no va, lo que se puede revisar son los parametro
 Efectivamente el copilot la lio con las alturas y las anchuras, ahora hay que revisar una violacion de segmento a la hora de lanzar el kernel de hough, vease revisar que haya reservado toda la memoria necesaria para hacer los calculos.
 
 Pues no se porque me dio la violacion de segmento, pero de todas formas ya esta todo en la gpu ahora hay que optimizar lo maximo posible, lo mas posible es que el getlines este pocho y hay que mirar lo de la memoria compartida.
+
+He mejorado la mierda de el tiempo usando bien la memoria reservada
+Ahora solo me queda mirar lo de la memoria compartida pero eso es un puto lio.
