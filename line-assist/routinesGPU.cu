@@ -190,85 +190,83 @@ void line_asist_GPU(uint8_t *im, int height, int width,
 	int *x1, int *y1, int *x2, int *y2, int *nlines)
 {
 	int threshold;
+	
+	//Canny
+		float *d_NR, *d_G, *d_phi, *d_Gx, *d_Gy;
+		uint8_t *d_im, *d_pedge, *d_image_out;
+		//Carga de memoria al kernel blur
+		cudaMalloc((void**)&d_im, height*width*sizeof(uint8_t));
+		cudaMalloc((void**)&d_NR, height*width*sizeof(float));
+		cudaMemcpy(d_im, im, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
+		//Llamada al kernel blur
+		dim3 dimBlockB(32,32,1); // numero de hilos por bloque
+		dim3 dimGridB(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
+		kernelBlur<<<dimGridB, dimBlockB>>>(d_im, d_NR, height, width);
+		cudaFree(d_im);
+		//Fin kernel blur
+		//Carga de memoria al kernel gradient
+		cudaMalloc((void**)&d_Gx, height*width*sizeof(float));
+		cudaMalloc((void**)&d_Gy, height*width*sizeof(float));
+		cudaMalloc((void**)&d_phi, height*width*sizeof(float));
+		cudaMalloc((void**)&d_G, height*width*sizeof(float));
+		//Llamada al kernel gradient
+		dim3 dimBlockG(32,32,1); // numero de hilos por bloque
+		dim3 dimGridG(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
+		kernelGradient<<<dimGridG, dimBlockG>>>(d_NR, d_Gx, d_Gy, d_phi, d_G, height, width);
+		cudaFree(d_Gx); cudaFree(d_Gy); cudaFree(d_NR);
+		//Fin kernel gradient
+		//Carga de memoria al kernel edge
+		cudaMalloc((void**)&d_pedge, height*width*sizeof(uint8_t));
+		//Llamada al kernel edge
+		dim3 dimBlockE(32,32,1); // numero de hilos por bloque
+		dim3 dimGridE( ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
+		kernelEdge<<<dimGridE, dimBlockE>>>(d_G, d_pedge, d_phi, height, width);
+		cudaFree(d_phi); 
+		//Fin kernel edge
+		//Carga de memoria al kernel Thresholding
+		cudaMalloc((void**)&d_image_out, height*width*sizeof(uint8_t));
+		//Llamada al kernel Thresholding
+		dim3 dimBlockT(32,32,1); // numero de hilos por bloque
+		dim3 dimGridT(ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
+		kernelThresholding<<<dimGridT, dimBlockT>>>(d_pedge, d_G, d_image_out, 1000.0f, height, width);
+		cudaFree(d_pedge); cudaFree(d_G); 
+		//Fin kernel Thresholding
 
-	float *d_NR, *d_G, *d_phi, *d_Gx, *d_Gy;
-	uint8_t *d_im, *d_pedge, *d_image_out;
-	//Carga de memoria al kernel blur
-	cudaMalloc((void**)&d_im, height*width*sizeof(uint8_t));
-	cudaMalloc((void**)&d_NR, height*width*sizeof(float));
-	cudaMemcpy(d_im, im, height*width*sizeof(uint8_t), cudaMemcpyHostToDevice);
-	//Llamada al kernel blur
-	dim3 dimBlockB(32,32,1); // numero de hilos por bloque
-	dim3 dimGridB(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
-	kernelBlur<<<dimGridB, dimBlockB>>>(d_im, d_NR, height, width);
-	cudaFree(d_im);
-	//Fin kernel blur
-	//Carga de memoria al kernel gradient
-	cudaMalloc((void**)&d_Gx, height*width*sizeof(float));
-	cudaMalloc((void**)&d_Gy, height*width*sizeof(float));
-	cudaMalloc((void**)&d_phi, height*width*sizeof(float));
-	cudaMalloc((void**)&d_G, height*width*sizeof(float));
-	//Llamada al kernel gradient
-	dim3 dimBlockG(32,32,1); // numero de hilos por bloque
-	dim3 dimGridG(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
-	kernelGradient<<<dimGridG, dimBlockG>>>(d_NR, d_Gx, d_Gy, d_phi, d_G, height, width);
-	cudaFree(d_Gx); cudaFree(d_Gy); cudaFree(d_NR);
-	//Fin kernel gradient
-	//Carga de memoria al kernel edge
-	cudaMalloc((void**)&d_pedge, height*width*sizeof(uint8_t));
-	//Llamada al kernel edge
-	dim3 dimBlockE(32,32,1); // numero de hilos por bloque
-	dim3 dimGridE( ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
-	kernelEdge<<<dimGridE, dimBlockE>>>(d_G, d_pedge, d_phi, height, width);
-	cudaFree(d_phi); 
-	//Fin kernel edge
-	//Carga de memoria al kernel Thresholding
-	cudaMalloc((void**)&d_image_out, height*width*sizeof(uint8_t));
-	//Llamada al kernel Thresholding
-	dim3 dimBlockT(32,32,1); // numero de hilos por bloque
-	dim3 dimGridT(ceil(height/32.0), ceil(width/32.0), 1); // numero de bloques
-	kernelThresholding<<<dimGridT, dimBlockT>>>(d_pedge, d_G, d_image_out, 1000.0f, height, width);
-	cudaFree(d_pedge); cudaFree(d_G); 
-	//Fin kernel Thresholding
-
-	
-	uint32_t *d_accumulators;
-	float *d_sin_table, *d_cos_table, hough_h, center_x = width/2.0, center_y = height/2.0;
-	hough_h = ((sqrt(2.0) * (float)(height>width?height:width)) / 2.0);
-
-	cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
-	dim3 dimBlockA(32,32,1); // numero de hilos por bloque
-	dim3 dimGridA(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
-	kernelAccInit<<<dimGridA, dimBlockA>>>(d_accumulators, accu_width, accu_height);
-	
-	cudaMalloc((void**)&d_sin_table, 180*sizeof(float));
-	cudaMalloc((void**)&d_cos_table, 180*sizeof(float));
-	cudaMemcpy(d_sin_table, sin_table, 180*sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_cos_table, cos_table, 180*sizeof(float), cudaMemcpyHostToDevice);
-	
-	
-	dim3 dimBlockH(32,32,1); // numero de hilos por bloque
-	dim3 dimGridH(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
-	kernelHoughTransform<<<dimGridH, dimBlockH>>>(d_image_out, width, height, d_accumulators, hough_h, d_sin_table, d_cos_table, center_x, center_y);
-	cudaFree(d_image_out); 
+	//Hough
+		uint32_t *d_accumulators;
+		float *d_sin_table, *d_cos_table, hough_h, center_x = width/2.0, center_y = height/2.0;
+		hough_h = ((sqrt(2.0) * (float)(height>width?height:width)) / 2.0);
+		cudaMalloc((void**)&d_accumulators, accu_height*accu_width*sizeof(uint32_t));
+		dim3 dimBlockA(32,32,1); // numero de hilos por bloque
+		dim3 dimGridA(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
+		kernelAccInit<<<dimGridA, dimBlockA>>>(d_accumulators, accu_width, accu_height);
+		cudaMalloc((void**)&d_sin_table, 180*sizeof(float));
+		cudaMalloc((void**)&d_cos_table, 180*sizeof(float));
+		cudaMemcpy(d_sin_table, sin_table, 180*sizeof(float), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_cos_table, cos_table, 180*sizeof(float), cudaMemcpyHostToDevice);
+		dim3 dimBlockH(32,32,1); // numero de hilos por bloque
+		dim3 dimGridH(ceil(height/32.0), ceil(width/32.0),1); // numero de bloques
+		kernelHoughTransform<<<dimGridH, dimBlockH>>>(d_image_out, width, height, d_accumulators, hough_h, d_sin_table, d_cos_table, center_x, center_y);
+		cudaFree(d_image_out); 
 
 	if (width>height) threshold = width/6;
 	else threshold = height/6;
 
-	int *d_x1_lines, *d_y1_lines, *d_x2_lines, *d_y2_lines, *d_lines;
-	cudaMalloc((void**)&d_x1_lines, 10*sizeof(int));
-	cudaMalloc((void**)&d_y1_lines, 10*sizeof(int));
-	cudaMalloc((void**)&d_x2_lines, 10*sizeof(int));
-	cudaMalloc((void**)&d_y2_lines, 10*sizeof(int));
-	cudaMalloc((void**)&d_lines, sizeof(int));
-	dim3 dimBlockL(32,32,1); // numero de hilos por bloque
-	dim3 dimGridL(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
-	kernelGetLines<<<dimGridL, dimBlockL>>>(threshold, d_accumulators, accu_width, accu_height, width, height, d_sin_table, d_cos_table, d_x1_lines, d_y1_lines, d_x2_lines, d_y2_lines, d_lines);
-	cudaMemcpy(x1, d_x1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(y1, d_y1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(x2, d_x2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(y2, d_y2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(nlines, d_lines, sizeof(int), cudaMemcpyDeviceToHost);
-	cudaFree(d_accumulators); cudaFree(d_sin_table); cudaFree(d_cos_table);
-	cudaFree(d_x1_lines); cudaFree(d_y1_lines); cudaFree(d_x2_lines); cudaFree(d_y2_lines); cudaFree(d_lines);
+	//Get lines
+		int *d_x1_lines, *d_y1_lines, *d_x2_lines, *d_y2_lines, *d_lines;
+		cudaMalloc((void**)&d_x1_lines, 10*sizeof(int));
+		cudaMalloc((void**)&d_y1_lines, 10*sizeof(int));
+		cudaMalloc((void**)&d_x2_lines, 10*sizeof(int));
+		cudaMalloc((void**)&d_y2_lines, 10*sizeof(int));
+		cudaMalloc((void**)&d_lines, sizeof(int));
+		dim3 dimBlockL(32,32,1); // numero de hilos por bloque
+		dim3 dimGridL(ceil(accu_height/32.0), ceil(accu_width/32.0),1); // numero de bloques
+		kernelGetLines<<<dimGridL, dimBlockL>>>(threshold, d_accumulators, accu_width, accu_height, width, height, d_sin_table, d_cos_table, d_x1_lines, d_y1_lines, d_x2_lines, d_y2_lines, d_lines);
+		cudaMemcpy(x1, d_x1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(y1, d_y1_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(x2, d_x2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(y2, d_y2_lines, 10*sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(nlines, d_lines, sizeof(int), cudaMemcpyDeviceToHost);
+		cudaFree(d_accumulators); cudaFree(d_sin_table); cudaFree(d_cos_table);
+		cudaFree(d_x1_lines); cudaFree(d_y1_lines); cudaFree(d_x2_lines); cudaFree(d_y2_lines); cudaFree(d_lines);
 }
