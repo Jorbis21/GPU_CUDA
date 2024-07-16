@@ -1,1 +1,1 @@
-Practica de CUDA para la asignatura de GPUs
+Práctica de CUDA para la asignatura de GPUs
